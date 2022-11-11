@@ -19,7 +19,7 @@ WORKDIR Compiler
 RUN opam init -a --disable-sandboxing
 RUN opam switch create 4.10.0 && \
     eval $(opam env) && \
-    opam pin add -y flow_parser https://github.com/facebook/flow.git && \ 
+    opam pin add -y flow_parser https://github.com/facebook/flow.git#v0.156.0 && \ 
     sed -i 's/.*REPLACE ME.*/    "flow_parser": "link:\/home\/builder\/.opam\/4.10.0\/.opam-switch\/sources\/flow_parser\/flow_parser.opam"/' package.json
 
 # Install dependencies
