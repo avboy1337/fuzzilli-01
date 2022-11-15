@@ -239,9 +239,13 @@ public struct JSTyper: Analyzer {
     private mutating func processScopeChanges(_ instr: Instruction) {
         switch instr.op {
         case is BeginIf:
+            // Push an empty state to represent the state when no else block exists.
+            // If there is an else block, we'll remove this state again, see below.
             state.pushChildState()
-        case is BeginElse:
+            // This state is the state of the if block.
             state.pushSiblingState(typeChanges: &typeChanges)
+        case is BeginElse:
+            state.replaceFirstSiblingStateWithNewState(typeChanges: &typeChanges)
         case is EndIf:
             state.mergeStates(typeChanges: &typeChanges)
         case is BeginSwitch:
@@ -265,6 +269,7 @@ public struct JSTyper: Analyzer {
              is BeginForInLoop,
              is BeginForOfLoop,
              is BeginForOfWithDestructLoop,
+             is BeginRepeatLoop,
              is BeginAnyFunction,
              is BeginConstructor,
              is BeginCodeString:
@@ -278,6 +283,7 @@ public struct JSTyper: Analyzer {
              is EndForLoop,
              is EndForInLoop,
              is EndForOfLoop,
+             is EndRepeatLoop,
              is EndAnyFunction,
              is EndConstructor,
              is EndCodeString:
@@ -618,6 +624,9 @@ public struct JSTyper: Analyzer {
             instr.innerOutputs.forEach {
                 set($0, .unknown)
             }
+
+        case is BeginRepeatLoop:
+            set(instr.innerOutput, .integer)
 
         case is BeginCatch:
             set(instr.innerOutput, .unknown)

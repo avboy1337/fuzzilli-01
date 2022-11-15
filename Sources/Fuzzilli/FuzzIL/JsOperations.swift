@@ -397,16 +397,6 @@ class TestIn: JsOperation {
     }
 }
 
-//
-class Explore: JsOperation {
-    let id: String
-
-    init(id: String, numArguments: Int) {
-        self.id = id
-        super.init(numInputs: numArguments + 1, numOutputs: 0)
-    }
-}
-
 // The parameters of a FuzzIL subroutine.
 public struct Parameters {
     /// The total number of parameters.
@@ -991,8 +981,12 @@ class ControlFlowOperation: JsOperation {
 }
 
 class BeginIf: ControlFlowOperation {
-    init() {
-        super.init(numInputs: 1, attributes: [.isBlockStart])
+    // If true, the condition for this if block will be negated.
+    let inverted: Bool
+
+    init(inverted: Bool) {
+        self.inverted = inverted
+        super.init(numInputs: 1, attributes: [.isBlockStart, .isMutable])
     }
 }
 
@@ -1088,6 +1082,22 @@ class BeginForOfWithDestructLoop: ControlFlowOperation {
 }
 
 class EndForOfLoop: ControlFlowOperation {
+    init() {
+        super.init(numInputs: 0, attributes: [.isBlockEnd, .isLoop])
+    }
+}
+
+// A loop that simply runs N times. Useful for example to force JIT compilation without creating new variables that contain the loop counts etc.
+class BeginRepeatLoop: ControlFlowOperation {
+    let iterations: Int
+
+    init(iterations: Int) {
+        self.iterations = iterations
+        super.init(numInputs: 0, numInnerOutputs: 1, attributes: [.isBlockStart, .isLoop], contextOpened: [.javascript, .loop])
+    }
+}
+
+class EndRepeatLoop: ControlFlowOperation {
     init() {
         super.init(numInputs: 0, attributes: [.isBlockEnd, .isLoop])
     }
@@ -1258,15 +1268,37 @@ class SwitchBreak: JsOperation {
 /// Internal operations.
 ///
 /// These can be used for internal fuzzer operations but will not appear in the corpus.
-class InternalOperation: JsOperation {
+class JSInternalOperation: JsOperation {
     init(numInputs: Int) {
         super.init(numInputs: numInputs, numOutputs: 0, attributes: [.isInternal])
     }
 }
 
 /// Writes the argument to the output stream.
-class Print: InternalOperation {
+class Print: JSInternalOperation {
     init() {
+        super.init(numInputs: 1)
+    }
+}
+
+/// Explore the input variable at runtime to determine which actions can be performed on it.
+/// Used by the ExplorationMutator.
+class Explore: JSInternalOperation {
+    let id: String
+
+    init(id: String, numArguments: Int) {
+        self.id = id
+        super.init(numInputs: numArguments + 1)
+    }
+}
+
+/// Turn the input value into a probe that records the actions performed on it.
+/// Used by the ProbingMutator.
+class Probe: JSInternalOperation {
+    let id: String
+
+    init(id: String) {
+        self.id = id
         super.init(numInputs: 1)
     }
 }

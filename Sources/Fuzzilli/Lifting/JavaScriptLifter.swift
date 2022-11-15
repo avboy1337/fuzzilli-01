@@ -58,10 +58,12 @@ public class JavaScriptLifter: Lifter {
 
         // Perform some analysis on the program, for example to determine variable uses
         var needToSupportExploration = false
+        var needToSupportProbing = false
         var analyzer = VariableAnalyzer(for: program)
         for instr in program.code {
             analyzer.analyze(instr)
             if instr.op is Explore { needToSupportExploration = true }
+            if instr.op is Probe { needToSupportProbing = true }
         }
         analyzer.finishAnalysis()
 
@@ -73,6 +75,10 @@ public class JavaScriptLifter: Lifter {
 
         if needToSupportExploration {
             w.emitBlock(JavaScriptExploreHelper.prefixCode)
+        }
+
+        if needToSupportProbing {
+            w.emitBlock(JavaScriptProbeHelper.prefixCode)
         }
 
         w.emitBlock(prefix)
@@ -519,6 +525,9 @@ public class JavaScriptLifter: Lifter {
                 let arguments = instr.inputs.suffix(from: 1).map({ expr(for: $0).text }).joined(separator: ",")
                 w.emit("\(JavaScriptExploreHelper.exploreFunc)(\"\(op.id)\", \(input(0)), this, [\(arguments)]);")
 
+            case let op as Probe:
+                w.emit("\(JavaScriptProbeHelper.probeFunc)(\"\(op.id)\", \(input(0)));")
+
             case is BeginWith:
                 w.emit("with (\(input(0))) {")
                 w.increaseIndentionLevel()
@@ -597,8 +606,12 @@ public class JavaScriptLifter: Lifter {
                 let expr = AssignmentExpression.new() <> "super.\(op.propertyName) \(op.op.token)= " <> input(0)
                 w.emit(expr)
 
-            case is BeginIf:
-                w.emit("if (\(input(0))) {")
+            case let op as BeginIf:
+                var cond = input(0)
+                if op.inverted {
+                    cond = UnaryExpression.new("!") <> cond
+                }
+                w.emit("if (\(cond)) {")
                 w.increaseIndentionLevel()
 
             case is BeginElse:
@@ -693,6 +706,15 @@ public class JavaScriptLifter: Lifter {
                 w.decreaseIndentionLevel()
                 w.emit("}")
 
+            case let op as BeginRepeatLoop:
+                let loopVar = instr.innerOutput
+                w.emit("for (\(varDecl) \(loopVar) = 0; \(loopVar) < \(op.iterations); \(loopVar)++) {")
+                w.increaseIndentionLevel()
+
+            case is EndRepeatLoop:
+                w.decreaseIndentionLevel()
+                w.emit("}")
+
             case is LoopBreak,
                 is SwitchBreak:
                 w.emit("break;")
@@ -765,6 +787,10 @@ public class JavaScriptLifter: Lifter {
         }
 
         w.emitBlock(suffix)
+
+        if needToSupportProbing {
+            w.emitBlock(JavaScriptProbeHelper.suffixCode)
+        }
 
         if options.contains(.includeComments), let footer = program.comments.at(.footer) {
             w.emitComment(footer)

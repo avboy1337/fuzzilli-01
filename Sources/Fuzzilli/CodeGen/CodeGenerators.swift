@@ -134,22 +134,24 @@ public let CodeGenerators: [CodeGenerator] = [
         b.loadBuiltin(b.genBuiltinName())
     },
 
-    CodeGenerator("PlainFunctionGenerator") { b in
-        b.buildPlainFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
+    RecursiveCodeGenerator("PlainFunctionGenerator") { b in
+        let f = b.buildPlainFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
             b.buildRecursive()
             b.doReturn(b.randVar())
         }
+        b.callFunction(f, withArgs: b.generateCallArguments(for: f))
     },
 
-    CodeGenerator("ArrowFunctionGenerator") { b in
+    RecursiveCodeGenerator("ArrowFunctionGenerator") { b in
         b.buildArrowFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
             b.buildRecursive()
             b.doReturn(b.randVar())
         }
+        // These are "typically" used as arguments, so we don't directly generate a call operation here.
     },
 
-    CodeGenerator("GeneratorFunctionGenerator") { b in
-        b.buildGeneratorFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
+    RecursiveCodeGenerator("GeneratorFunctionGenerator") { b in
+        let f = b.buildGeneratorFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
             b.buildRecursive()
             if probability(0.5) {
                 b.yield(b.randVar())
@@ -158,26 +160,29 @@ public let CodeGenerators: [CodeGenerator] = [
             }
             b.doReturn(b.randVar())
         }
+        b.callFunction(f, withArgs: b.generateCallArguments(for: f))
     },
 
-    CodeGenerator("AsyncFunctionGenerator") { b in
-        b.buildAsyncFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
+    RecursiveCodeGenerator("AsyncFunctionGenerator") { b in
+        let f = b.buildAsyncFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
             b.buildRecursive()
             b.await(b.randVar())
             b.doReturn(b.randVar())
         }
+        b.callFunction(f, withArgs: b.generateCallArguments(for: f))
     },
 
-    CodeGenerator("AsyncArrowFunctionGenerator") { b in
+    RecursiveCodeGenerator("AsyncArrowFunctionGenerator") { b in
         b.buildAsyncArrowFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
             b.buildRecursive()
             b.await(b.randVar())
             b.doReturn(b.randVar())
         }
+        // These are "typically" used as arguments, so we don't directly generate a call operation here.
     },
 
-    CodeGenerator("AsyncGeneratorFunctionGenerator") { b in
-        b.buildAsyncGeneratorFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
+    RecursiveCodeGenerator("AsyncGeneratorFunctionGenerator") { b in
+        let f = b.buildAsyncGeneratorFunction(with: b.generateFunctionParameters(), isStrict: probability(0.1)) { _ in
             b.buildRecursive()
             b.await(b.randVar())
             if probability(0.5) {
@@ -187,12 +192,14 @@ public let CodeGenerators: [CodeGenerator] = [
             }
             b.doReturn(b.randVar())
         }
+        b.callFunction(f, withArgs: b.generateCallArguments(for: f))
     },
 
-    CodeGenerator("ConstructorGenerator") { b in
-        b.buildConstructor(with: b.generateFunctionParameters()) { _ in
+    RecursiveCodeGenerator("ConstructorGenerator") { b in
+        let c = b.buildConstructor(with: b.generateFunctionParameters()) { _ in
             b.buildRecursive()
         }
+        b.construct(c, withArgs: b.generateCallArguments(for: c))
     },
 
     CodeGenerator("PropertyRetrievalGenerator", input: .object()) { b, obj in
@@ -362,7 +369,10 @@ public let CodeGenerators: [CodeGenerator] = [
         guard let methodName = b.type(of: obj).randomMethod() else { return }
 
         let (arguments, spreads) = b.randCallArgumentsWithSpreading(n: Int.random(in: 3...5))
-        b.callMethod(methodName, on: obj, withArgs: arguments, spreading: spreads)
+        // Spreading is likely to lead to a runtime exception if the argument isn't iterable, so wrap this in try-catch.
+        b.buildTryCatchFinally(tryBody: {
+            b.callMethod(methodName, on: obj, withArgs: arguments, spreading: spreads)
+        }, catchBody: { _ in })
     },
 
     CodeGenerator("ComputedMethodCallGenerator", input: .object()) { b, obj in
@@ -388,37 +398,48 @@ public let CodeGenerators: [CodeGenerator] = [
 
         let method = b.loadString(methodName)
         let (arguments, spreads) = b.randCallArgumentsWithSpreading(n: Int.random(in: 3...5))
-        b.callComputedMethod(method, on: obj, withArgs: arguments, spreading: spreads)
+        // Spreading is likely to lead to a runtime exception if the argument isn't iterable, so wrap this in try-catch.
+        b.buildTryCatchFinally(tryBody: {
+            b.callComputedMethod(method, on: obj, withArgs: arguments, spreading: spreads)
+        }, catchBody: { _ in })
     },
 
     CodeGenerator("FunctionCallGenerator", input: .function()) { b, f in
         guard let arguments = b.randCallArguments(for: f) else { return }
-        b.callFunction(f, withArgs: arguments)
+        if b.type(of: f).Is(.function()) {
+            b.callFunction(f, withArgs: arguments)
+        } else {
+            b.buildTryCatchFinally(tryBody: {
+                b.callFunction(f, withArgs: arguments)
+            }, catchBody: { _ in })
+        }
     },
 
     CodeGenerator("ConstructorCallGenerator", input: .constructor()) { b, c in
         guard let arguments = b.randCallArguments(for: c) else { return }
-        b.construct(c, withArgs: arguments)
+        if b.type(of: c).Is(.constructor()) {
+            b.construct(c, withArgs: arguments)
+        } else {
+            b.buildTryCatchFinally(tryBody: {
+                b.construct(c, withArgs: arguments)
+            }, catchBody: { _ in })
+        }
     },
 
     CodeGenerator("FunctionCallWithSpreadGenerator", input: .function()) { b, f in
-        // We cannot currently track element types of Arrays and other Iterable objects and so cannot properly determine argument types when spreading.
-        // For that reason, we don't run this CodeGenerator in conservative mode
-        guard b.mode != .conservative else { return }
-
         let (arguments, spreads) = b.randCallArgumentsWithSpreading(n: Int.random(in: 3...5))
-
-        b.callFunction(f, withArgs: arguments, spreading: spreads)
+        // Spreading is likely to lead to a runtime exception if the argument isn't iterable, so wrap this in try-catch.
+        b.buildTryCatchFinally(tryBody: {
+            b.callFunction(f, withArgs: arguments, spreading: spreads)
+        }, catchBody: { _ in })
     },
 
     CodeGenerator("ConstructorCallWithSpreadGenerator", input: .constructor()) { b, c in
-        // We cannot currently track element types of Arrays and other Iterable objects and so cannot properly determine argument types when spreading.
-        // For that reason, we don't run this CodeGenerator in conservative mode
-        guard b.mode != .conservative else { return }
-
         let (arguments, spreads) = b.randCallArgumentsWithSpreading(n: Int.random(in: 3...5))
-
-        b.construct(c, withArgs: arguments, spreading: spreads)
+        // Spreading is likely to lead to a runtime exception if the argument isn't iterable, so wrap this in try-catch.
+        b.buildTryCatchFinally(tryBody: {
+            b.construct(c, withArgs: arguments, spreading: spreads)
+        }, catchBody: { _ in })
     },
 
     CodeGenerator("SubroutineReturnGenerator", inContext: .subroutine, input: .anything) { b, val in
@@ -458,6 +479,7 @@ public let CodeGenerators: [CodeGenerator] = [
     },
 
     CodeGenerator("ReassignmentGenerator", input: .anything) { b, val in
+        // TODO try to find a replacement with a compatible type and make sure it's a different variable.
         let target = b.randVar()
         b.reassign(target, to: val)
     },
@@ -534,12 +556,15 @@ public let CodeGenerators: [CodeGenerator] = [
         b.conditional(condition, lhs, rhs)
     },
 
-    CodeGenerator("ClassGenerator") { b in
+    RecursiveCodeGenerator("ClassGenerator") { b in
         // Possibly pick a superclass
         var superclass: Variable? = nil
         if probability(0.5) {
             superclass = b.randVar(ofConservativeType: .constructor())
         }
+
+        let numProperties = Int.random(in: 1...3)
+        let numMethods = Int.random(in: 1...3)
 
         b.buildClass(withSuperclass: superclass) { cls in
             cls.defineConstructor(with: b.generateFunctionParameters()) { _ in
@@ -549,18 +574,16 @@ public let CodeGenerators: [CodeGenerator] = [
                     b.callSuperConstructor(withArgs: arguments)
                 }
 
-                b.buildRecursive()
+                b.buildRecursive(block: 1, of: numMethods + 1)
             }
 
-            let numProperties = Int.random(in: 1...3)
             for _ in 0..<numProperties {
                 cls.defineProperty(b.genPropertyNameForWrite())
             }
 
-            let numMethods = Int.random(in: 1...3)
-            for _ in 0..<numMethods {
+            for i in 0..<numMethods {
                 cls.defineMethod(b.genMethodName(), with: b.generateFunctionParameters()) { _ in
-                    b.buildRecursive()
+                    b.buildRecursive(block: 2 + i, of: numMethods + 1)
                 }
             }
         }
@@ -624,34 +647,34 @@ public let CodeGenerators: [CodeGenerator] = [
         b.storeSuperProperty(value, as: propertyName, with: chooseUniform(from: BinaryOperator.allCases))
     },
 
-    CodeGenerator("IfElseGenerator", input: .boolean) { b, cond in
+    RecursiveCodeGenerator("IfElseGenerator", input: .boolean) { b, cond in
         b.buildIfElse(cond, ifBody: {
-            b.buildRecursive()
+            b.buildRecursive(block: 1, of: 2)
         }, elseBody: {
-            b.buildRecursive()
+            b.buildRecursive(block: 2, of: 2)
         })
     },
 
-    CodeGenerator("CompareWithIfElseGenerator", inputs: (.anything, .anything)) { b, lhs, rhs in
+    RecursiveCodeGenerator("CompareWithIfElseGenerator", inputs: (.anything, .anything)) { b, lhs, rhs in
         let cond = b.compare(lhs, with: rhs, using: chooseUniform(from: Comparator.allCases))
         b.buildIfElse(cond, ifBody: {
-            b.buildRecursive()
+            b.buildRecursive(block: 1, of: 2)
         }, elseBody: {
-            b.buildRecursive()
+            b.buildRecursive(block: 2, of: 2)
         })
     },
 
-    CodeGenerator("SwitchCaseGenerator", inContext: .switchBlock, input: .anything) { b, caseVar in
+    RecursiveCodeGenerator("SwitchCaseGenerator", inContext: .switchBlock, input: .anything) { b, caseVar in
         b.buildSwitchCase(forCase: caseVar, fallsThrough: probability(0.1)) {
             b.buildRecursive()
         }
     },
 
-    CodeGenerator("SwitchBlockGenerator", input: .anything) { b, cond in
+    RecursiveCodeGenerator("SwitchBlockGenerator", input: .anything) { b, cond in
         var candidates: [Variable] = []
 
         // Generate a minimum of three cases (including a potential default case)
-        for _ in 0..<Int.random(in: 3...8) {
+        for _ in 0..<Int.random(in: 3...5) {
             candidates.append(b.randVar())
         }
 
@@ -665,11 +688,11 @@ public let CodeGenerators: [CodeGenerator] = [
             for (idx, val) in candidates.enumerated() {
                 if idx == defaultCasePosition {
                     cases.addDefault(fallsThrough: probability(0.1)) {
-                        b.buildRecursive()
+                        b.buildRecursive(block: idx + 1, of: candidates.count)
                     }
                 } else {
                     cases.add(val, fallsThrough: probability(0.1)) {
-                        b.buildRecursive()
+                        b.buildRecursive(block: idx + 1, of: candidates.count)
                     }
                 }
             }
@@ -680,7 +703,7 @@ public let CodeGenerators: [CodeGenerator] = [
         b.switchBreak()
     },
 
-    CodeGenerator("WhileLoopGenerator") { b in
+    RecursiveCodeGenerator("WhileLoopGenerator") { b in
         let loopVar = b.reuseOrLoadInt(0)
         let end = b.reuseOrLoadInt(Int64.random(in: 0...10))
         b.buildWhileLoop(loopVar, .lessThan, end) {
@@ -689,7 +712,7 @@ public let CodeGenerators: [CodeGenerator] = [
         }
     },
 
-    CodeGenerator("DoWhileLoopGenerator") { b in
+    RecursiveCodeGenerator("DoWhileLoopGenerator") { b in
         let loopVar = b.reuseOrLoadInt(0)
         let end = b.reuseOrLoadInt(Int64.random(in: 0...10))
         b.buildDoWhileLoop(loopVar, .lessThan, end) {
@@ -698,7 +721,7 @@ public let CodeGenerators: [CodeGenerator] = [
         }
     },
 
-    CodeGenerator("ForLoopGenerator") { b in
+    RecursiveCodeGenerator("ForLoopGenerator") { b in
         let start = b.reuseOrLoadInt(0)
         let end = b.reuseOrLoadInt(Int64.random(in: 0...10))
         let step = b.reuseOrLoadInt(1)
@@ -707,19 +730,19 @@ public let CodeGenerators: [CodeGenerator] = [
         }
     },
 
-    CodeGenerator("ForInLoopGenerator", input: .object()) { b, obj in
+    RecursiveCodeGenerator("ForInLoopGenerator", input: .object()) { b, obj in
         b.buildForInLoop(obj) { _ in
             b.buildRecursive()
         }
     },
 
-    CodeGenerator("ForOfLoopGenerator", input: .iterable) { b, obj in
+    RecursiveCodeGenerator("ForOfLoopGenerator", input: .iterable) { b, obj in
         b.buildForOfLoop(obj) { _ in
             b.buildRecursive()
         }
     },
 
-    CodeGenerator("ForOfWithDestructLoopGenerator", input: .iterable) { b, obj in
+    RecursiveCodeGenerator("ForOfWithDestructLoopGenerator", input: .iterable) { b, obj in
         // Don't run this generator in conservative mode, until we can track array element types
         guard b.mode != .conservative else { return }
         var indices: [Int64] = []
@@ -738,6 +761,13 @@ public let CodeGenerators: [CodeGenerator] = [
         }
     },
 
+    RecursiveCodeGenerator("RepeatLoopGenerator") { b in
+        let numIterations = Int.random(in: 2...100)
+        b.buildRepeat(n: numIterations) { _ in
+            b.buildRecursive()
+        }
+    },
+
     CodeGenerator("LoopBreakGenerator", inContext: .loop) { b in
         b.loopBreak()
     },
@@ -747,30 +777,30 @@ public let CodeGenerators: [CodeGenerator] = [
         b.loopContinue()
     },
 
-    CodeGenerator("TryCatchGenerator") { b in
+    RecursiveCodeGenerator("TryCatchGenerator") { b in
         // Build either try-catch-finally, try-catch, or try-finally
         withEqualProbability({
             // try-catch-finally
             b.buildTryCatchFinally(tryBody: {
-                b.buildRecursive()
+                b.buildRecursive(block: 1, of: 3)
             }, catchBody: { _ in
-                b.buildRecursive()
+                b.buildRecursive(block: 2, of: 3)
             }, finallyBody: {
-                b.buildRecursive()
+                b.buildRecursive(block: 3, of: 3)
             })
         }, {
             // try-catch
             b.buildTryCatchFinally(tryBody: {
-                b.buildRecursive()
+                b.buildRecursive(block: 1, of: 2)
             }, catchBody: { _ in
-                b.buildRecursive()
+                b.buildRecursive(block: 2, of: 2)
             })
         }, {
             // try-finally
             b.buildTryCatchFinally(tryBody: {
-                b.buildRecursive()
+                b.buildRecursive(block: 1, of: 2)
             }, finallyBody: {
-                b.buildRecursive()
+                b.buildRecursive(block: 2, of: 2)
             })
         })
     },
@@ -839,15 +869,11 @@ public let CodeGenerators: [CodeGenerator] = [
     },
 
     CodeGenerator("MethodCallWithDifferentThisGenerator", inputs: (.object(), .object())) { b, obj, this in
-        var methodName = b.type(of: obj).randomMethod()
-        if methodName == nil {
-            guard b.mode != .conservative else { return }
-            methodName = b.genMethodName()
-        }
-        guard let arguments = b.randCallArguments(forMethod: methodName!, on: obj) else { return }
+        guard let methodName = b.type(of: obj).randomMethod() else { return }
+        guard let arguments = b.randCallArguments(forMethod: methodName, on: obj) else { return }
         let Reflect = b.reuseOrLoadBuiltin("Reflect")
         let args = b.createArray(with: arguments)
-        b.callMethod("apply", on: Reflect, withArgs: [b.loadProperty(methodName!, of: obj), this, args])
+        b.callMethod("apply", on: Reflect, withArgs: [b.loadProperty(methodName, of: obj), this, args])
     },
 
     CodeGenerator("ProxyGenerator", input: .object()) { b, target in
@@ -866,7 +892,7 @@ public let CodeGenerators: [CodeGenerator] = [
         b.construct(Proxy, withArgs: [target, handler])
     },
 
-    CodeGenerator("PromiseGenerator") { b in
+    RecursiveCodeGenerator("PromiseGenerator") { b in
         let handler = b.buildPlainFunction(with: .parameters(n: 2)) { _ in
             // TODO could provide type hints here for the parameters.
             b.buildRecursive()
@@ -895,7 +921,7 @@ public let CodeGenerators: [CodeGenerator] = [
     },
 
     // Generates a JavaScript 'with' statement
-    CodeGenerator("WithStatementGenerator", input: .object()) { b, obj in
+    RecursiveCodeGenerator("WithStatementGenerator", input: .object()) { b, obj in
         b.buildWith(obj) {
             withProbability(0.5, do: { () -> Void in
                 b.loadFromScope(id: b.genPropertyNameForRead())
@@ -918,7 +944,7 @@ public let CodeGenerators: [CodeGenerator] = [
         b.storeToScope(value, as: b.genPropertyNameForWrite())
     },
 
-    CodeGenerator("EvalGenerator") { b in
+    RecursiveCodeGenerator("EvalGenerator") { b in
         let code = b.buildCodeString() {
             b.buildRecursive()
         }
@@ -926,18 +952,68 @@ public let CodeGenerators: [CodeGenerator] = [
         b.callFunction(eval, withArgs: [code])
     },
 
-    CodeGenerator("BlockStatementGenerator") { b in
-        b.blockStatement(){
+    RecursiveCodeGenerator("BlockStatementGenerator") { b in
+        b.blockStatement() {
             b.buildRecursive()
         }
     },
 
-    CodeGenerator("MathOperationGenerator") { b in
+    CodeGenerator("NumberComputationGenerator") { b in
+        // Generate a sequence of 3-7 random number computations on a couple of existing variables and some newly created constants.
+        let numComputations = Int.random(in: 3...7)
+
+        // Common mathematical operations are exposed through the Math builtin in JavaScript.
         let Math = b.reuseOrLoadBuiltin("Math")
-        // This can fail in tests, which lack the full JavaScriptEnvironment
-        guard let method = b.type(of: Math).randomMethod() else { return }
-        let args = b.generateCallArguments(forMethod: method, on: Math)
-        b.callMethod(method, on: Math, withArgs: args)
+
+        var values = b.randVars(upTo: Int.random(in: 1...3))
+        for _ in 0..<Int.random(in: 1...2) {
+            values.append(b.loadInt(b.genInt()))
+        }
+        for _ in 0..<Int.random(in: 0...1) {
+            values.append(b.loadFloat(b.genFloat()))
+        }
+
+        for _ in 0..<numComputations {
+            withEqualProbability({
+                values.append(b.binary(chooseUniform(from: values), chooseUniform(from: values), with: chooseUniform(from: BinaryOperator.allCases)))
+            }, {
+                values.append(b.unary(chooseUniform(from: UnaryOperator.allCases), chooseUniform(from: values)))
+            }, {
+                // This can fail in tests, which lack the full JavaScriptEnvironment
+                guard let method = b.type(of: Math).randomMethod() else { return }
+                var args = [Variable]()
+                for _ in 0..<b.methodSignature(of: method, on: Math).numParameters {
+                    args.append(chooseUniform(from: values))
+                }
+                b.callMethod(method, on: Math, withArgs: args)
+            })
+        }
+    },
+
+    // TODO maybe this should be a ProgramTemplate instead?
+    RecursiveCodeGenerator("JITFunctionGenerator") { b in
+        let numIterations = 100
+
+        let lastIteration = b.loadInt(Int64(numIterations) - 1)
+        let numParameters = Int.random(in: 2...4)
+        let f = b.buildPlainFunction(with: .parameters(n: numParameters)) { args in
+            let i = args[0]
+            b.buildIf(b.compare(i, with: lastIteration, using: .equal)) {
+                b.buildRecursive(block: 1, of: 3, n: 3)
+            }
+            b.buildRecursive(block: 2, of: 3)
+            b.doReturn(b.randVar())
+        }
+        b.buildRepeat(n: numIterations) { i in
+            b.buildIf(b.compare(i, with: lastIteration, using: .equal)) {
+                b.buildRecursive(block: 3, of: 3, n: 3)
+            }
+            var args = [i]
+            for _ in 0..<numParameters - 1 {
+                args.append(b.randVar())
+            }
+            b.callFunction(f, withArgs: args)
+        }
     },
 
     CodeGenerator("ResizableArrayBufferGenerator", input: .anything) { b, v in

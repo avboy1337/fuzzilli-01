@@ -297,6 +297,9 @@ public class FuzzILLifter: Lifter {
             let arguments = instr.inputs.suffix(from: 1).map({ $0.identifier }).joined(separator: ", ")
             w.emit("Explore \(instr.input(0)), [\(arguments)]")
 
+        case is Probe:
+            w.emit("Probe \(instr.input(0))")
+
         case is BeginWith:
             w.emit("BeginWith \(input(0))")
             w.increaseIndentionLevel()
@@ -314,8 +317,9 @@ public class FuzzILLifter: Lifter {
         case is Nop:
             w.emit("Nop")
 
-        case is BeginIf:
-            w.emit("BeginIf \(input(0))")
+        case let op as BeginIf:
+            let mode = op.inverted ? "(inverted) " : ""
+            w.emit("BeginIf \(mode)\(input(0))")
             w.increaseIndentionLevel()
 
         case is BeginElse:
@@ -426,6 +430,14 @@ public class FuzzILLifter: Lifter {
         case is EndForOfLoop:
             w.decreaseIndentionLevel()
             w.emit("EndForOfLoop")
+
+        case let op as BeginRepeatLoop:
+            w.emit("BeginLoop \(op.iterations) -> \(instr.innerOutput)")
+            w.increaseIndentionLevel()
+
+        case is EndRepeatLoop:
+            w.decreaseIndentionLevel()
+            w.emit("EndLoop")
 
         case is LoopBreak,
              is SwitchBreak:

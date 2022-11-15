@@ -20,7 +20,7 @@ public protocol FuzzEngine: ComponentBase {
 }
 
 extension FuzzEngine {
-    public func execute(_ program: Program, stats: inout ProgramProducerStats) -> ExecutionOutcome {
+    public func execute(_ program: Program) -> ExecutionOutcome {
         fuzzer.dispatchEvent(fuzzer.events.ProgramGenerated, data: program)
 
         let execution = fuzzer.execute(program)
@@ -28,27 +28,34 @@ extension FuzzEngine {
         switch execution.outcome {
             case .crashed(let termsig):
                 fuzzer.processCrash(program, withSignal: termsig, withStderr: execution.stderr, withStdout: execution.stdout, origin: .local)
+                program.contributors.generatedCrashingSample()
 
             case .succeeded:
                 fuzzer.dispatchEvent(fuzzer.events.ValidProgramFound, data: program)
+                var isInteresting = false
                 if let aspects = fuzzer.evaluator.evaluate(execution) {
                     if fuzzer.config.enableInspection {
-                        program.comments.add("Program is interesting due to \(aspects)", at: .footer)
+                        program.comments.add("Program may be interesting due to \(aspects)", at: .footer)
                     }
-                    fuzzer.processInteresting(program, havingAspects: aspects, origin: .local)
+                    isInteresting = fuzzer.processMaybeInteresting(program, havingAspects: aspects, origin: .local)
                 }
-                stats.producedValidSample()
+
+                if isInteresting {
+                    program.contributors.generatedInterestingSample()
+                } else {
+                    program.contributors.generatedValidSample()
+                }
 
             case .failed(_):
                 if fuzzer.config.enableDiagnostics {
                     program.comments.add("Stdout:\n" + execution.stdout, at: .footer)
                 }
                 fuzzer.dispatchEvent(fuzzer.events.InvalidProgramFound, data: program)
-                stats.producedInvalidSample()
+                program.contributors.generatedInvalidSample()
 
             case .timedOut:
                 fuzzer.dispatchEvent(fuzzer.events.TimeOutFound, data: program)
-                stats.producedInvalidSample()
+                program.contributors.generatedTimeOutSample()
         }
 
         if fuzzer.config.enableDiagnostics {

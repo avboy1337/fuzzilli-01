@@ -162,8 +162,8 @@ message TestIn {
 }
 
 message Parameters {
-  uint32 count = 1;
-  bool hasRest = 2;
+    uint32 count = 1;
+    bool hasRest = 2;
 }
 
 message BeginPlainFunction {
@@ -391,6 +391,10 @@ message Explore {
     string id = 1;
 }
 
+message Probe {
+    string id = 1;
+}
+
 message BeginWith {
 }
 
@@ -406,6 +410,7 @@ message StoreToScope {
 }
 
 message BeginIf {
+    bool inverted = 1;
 }
 
 message BeginElse {
@@ -470,6 +475,13 @@ message BeginForOfWithDestruct {
 }
 
 message EndForOf {
+}
+
+message BeginRepeat {
+    int64 iterations = 1;
+}
+
+message EndRepeat {
 }
 
 message LoopBreak {

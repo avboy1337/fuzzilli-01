@@ -538,6 +538,8 @@ extension Instruction: ProtobufConvertible {
                 }
             case let op as Explore:
                 $0.explore = Fuzzilli_Protobuf_Explore.with { $0.id = op.id }
+            case let op as Probe:
+                $0.probe = Fuzzilli_Protobuf_Probe.with { $0.id = op.id }
             case is BeginWith:
                 $0.beginWith = Fuzzilli_Protobuf_BeginWith()
             case is EndWith:
@@ -546,8 +548,10 @@ extension Instruction: ProtobufConvertible {
                 $0.loadFromScope = Fuzzilli_Protobuf_LoadFromScope.with { $0.id = op.id }
             case let op as StoreToScope:
                 $0.storeToScope = Fuzzilli_Protobuf_StoreToScope.with { $0.id = op.id }
-            case is BeginIf:
-                $0.beginIf = Fuzzilli_Protobuf_BeginIf()
+            case let op as BeginIf:
+                $0.beginIf = Fuzzilli_Protobuf_BeginIf.with {
+                    $0.inverted = op.inverted
+                }
             case is BeginElse:
                 $0.beginElse = Fuzzilli_Protobuf_BeginElse()
             case is EndIf:
@@ -592,6 +596,10 @@ extension Instruction: ProtobufConvertible {
                 }
             case is EndForOfLoop:
                 $0.endForOf = Fuzzilli_Protobuf_EndForOf()
+            case let op as BeginRepeatLoop:
+                $0.beginRepeat = Fuzzilli_Protobuf_BeginRepeat.with { $0.iterations = Int64(op.iterations) }
+            case is EndRepeatLoop:
+                $0.endRepeat = Fuzzilli_Protobuf_EndRepeat()
             case is LoopBreak:
                 $0.loopBreak = Fuzzilli_Protobuf_LoopBreak()
             case is LoopContinue:
@@ -840,6 +848,8 @@ extension Instruction: ProtobufConvertible {
             op = StoreSuperPropertyWithBinop(propertyName: p.propertyName, operator: try convertEnum(p.op, BinaryOperator.allCases))
         case .explore(let p):
             op = Explore(id: p.id, numArguments: inouts.count - 1)
+        case .probe(let p):
+            op = Probe(id: p.id)
         case .beginWith(_):
             op = BeginWith()
         case .endWith(_):
@@ -848,8 +858,8 @@ extension Instruction: ProtobufConvertible {
             op = LoadFromScope(id: p.id)
         case .storeToScope(let p):
             op = StoreToScope(id: p.id)
-        case .beginIf(_):
-            op = BeginIf()
+        case .beginIf(let p):
+            op = BeginIf(inverted: p.inverted)
         case .beginElse(_):
             op = BeginElse()
         case .endIf(_):
@@ -888,6 +898,10 @@ extension Instruction: ProtobufConvertible {
             op = BeginForOfWithDestructLoop(indices: p.indices.map({ Int64($0) }), hasRestElement: p.hasRestElement_p)
         case .endForOf(_):
             op = EndForOfLoop()
+        case .beginRepeat(let p):
+            op = BeginRepeatLoop(iterations: Int(p.iterations))
+        case .endRepeat(_):
+            op = EndRepeatLoop()
         case .loopBreak(_):
             op = LoopBreak()
         case .loopContinue(_):

@@ -20,14 +20,75 @@ class ProgramBuilderTests: XCTestCase {
     func testBuilding() {
         let fuzzer = makeMockFuzzer()
         let b = fuzzer.makeBuilder()
+        let N = 100
 
+        var sumOfProgramSizes = 0
         for _ in 0..<100 {
-            b.build(n: 100)
+            b.build(n: N)
             let program = b.finalize()
+            sumOfProgramSizes += program.size
+
             // Add to corpus since build() does splicing as well
             fuzzer.corpus.add(program, ProgramAspects(outcome: .succeeded))
 
-            XCTAssert(program.size >= 100)
+            // We'll have generated at least N instructions, probably more.
+            XCTAssertGreaterThanOrEqual(program.size, N)
+        }
+
+        // On average, we should generate between n and 2x n instructions.
+        let averageSize = sumOfProgramSizes / 100
+        XCTAssertLessThanOrEqual(averageSize, 2*N)
+    }
+
+    func testShapeOfGeneratedCode1() {
+        let fuzzer = makeMockFuzzer()
+        let b = fuzzer.makeBuilder()
+
+        let simpleGenerator = CodeGenerator("SimpleGenerator") { b in
+            b.loadInt(Int64.random(in: 0..<100))
+        }
+        fuzzer.codeGenerators = WeightedList<CodeGenerator>([
+            (simpleGenerator,      1),
+        ])
+
+        for _ in 0..<10 {
+            b.build(n: 100, by: .runningGenerators)
+            let program = b.finalize()
+
+            // In this case, the size of the generated program must be exactly the requested size.
+            XCTAssertEqual(program.size, 100)
+        }
+    }
+
+    func testShapeOfGeneratedCode2() {
+        let fuzzer = makeMockFuzzer()
+        let b = fuzzer.makeBuilder()
+
+        b.minRecursiveBudgetRelativeToParentBudget = 0.25
+        b.maxRecursiveBudgetRelativeToParentBudget = 0.25
+
+        let simpleGenerator = CodeGenerator("SimpleGenerator") { b in
+            b.loadInt(Int64.random(in: 0..<100))
+        }
+        let recursiveGenerator = RecursiveCodeGenerator("RecursiveGenerator") { b in
+            b.buildRepeat(n: 5) { _ in
+                b.buildRecursive()
+            }
+        }
+        fuzzer.codeGenerators = WeightedList<CodeGenerator>([
+            (simpleGenerator,      3),
+            (recursiveGenerator,   1),
+        ])
+
+        for _ in 0..<10 {
+            b.build(n: 100, by: .runningGenerators)
+            let program = b.finalize()
+
+            // Uncomment to see the "shape" of generated programs on the console.
+            //print(FuzzILLifter().lift(program))
+
+            // The size may be larger, but only roughly by 100 * 0.25 + 100 * 0.25**2 + 100 * 0.25**3 ... (each block may overshoot its budget by roughly the maximum recursive block size).
+            XCTAssertLessThan(program.size, 150)
         }
     }
 
@@ -417,24 +478,20 @@ class ProgramBuilderTests: XCTestCase {
         //
         // Original Program
         //
-        var i = b.loadInt(0)
-        var end = b.loadInt(100)
-        b.buildDoWhileLoop(i, .lessThan, end) {
-            b.unary(.PostInc, i)
+        b.buildAsyncFunction(with: .parameters(n: 0)) { _ in
+            let promise = b.loadBuiltin("ThePromise")
             splicePoint = b.indexOfNextInstruction()
-            b.loopBreak()
+            b.await(promise)
         }
         let original = b.finalize()
 
         //
         // Actual Program
         //
-        // This should fail: we cannot splice the Break as it required loop context.
+        // This should fail: we cannot splice the Await as it required .async context.
         XCTAssertFalse(b.splice(from: original, at: splicePoint, mergeDataFlow: false))
         XCTAssertEqual(b.indexOfNextInstruction(), 0)
-        i = b.loadInt(0)
-        end = b.loadInt(100)
-        b.buildDoWhileLoop(i, .lessThan, end) {
+        b.buildAsyncFunction(with: .parameters(n: 1)) { args in
             // This should work however.
             b.splice(from: original, at: splicePoint, mergeDataFlow: false)
         }
@@ -443,10 +500,9 @@ class ProgramBuilderTests: XCTestCase {
         //
         // Expected Program
         //
-        i = b.loadInt(0)
-        end = b.loadInt(100)
-        b.buildDoWhileLoop(i, .lessThan, end) {
-            b.loopBreak()
+        b.buildAsyncFunction(with: .parameters(n: 1)) { args in
+            let promise = b.loadBuiltin("ThePromise")
+            b.await(promise)
         }
         let expected = b.finalize()
 
@@ -1468,6 +1524,8 @@ extension ProgramBuilderTests {
     static var allTests : [(String, (ProgramBuilderTests) -> () throws -> Void)] {
         return [
             ("testBuilding", testBuilding),
+            ("testShapeOfGeneratedCode1", testShapeOfGeneratedCode1),
+            ("testShapeOfGeneratedCode2", testShapeOfGeneratedCode2),
             ("testTypeInstantiation", testTypeInstantiation),
             ("testVariableReuse", testVariableReuse),
             ("testVarRetrievalFromInnermostScope", testVarRetrievalFromInnermostScope),
