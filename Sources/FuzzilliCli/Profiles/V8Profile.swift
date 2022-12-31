@@ -29,6 +29,37 @@ fileprivate let TurbofanVerifyTypeGenerator = CodeGenerator("TurbofanVerifyTypeG
     b.eval("%VerifyType(%@)", with: [v])
 }
 
+fileprivate let WorkerGenerator = RecursiveCodeGenerator("WorkerGenerator") { b in
+    let workerSignature = Signature(withParameterCount: Int.random(in: 0...3))
+
+    // TODO(cffsmith): currently Fuzzilli does not know that this code is sent
+    // to another worker as a string. This has the consequence that we might
+    // use variables inside the worker that are defined in a different scope
+    // and as such they are not accessible / undefined. To fix this we should
+    // define an Operation attribute that tells Fuzzilli to ignore variables
+    // defined in outer scopes.
+    let workerFunction = b.buildPlainFunction(with: .signature(workerSignature)) { args in
+        let this = b.loadThis()
+
+        // Generate a random onmessage handler for incoming messages.
+        let onmessageFunction = b.buildPlainFunction(with: .parameters(n: 1)) { args in
+            b.buildRecursive(block: 1, of: 2)
+        }
+        b.storeProperty(onmessageFunction, as: "onmessage", on: this)
+
+        b.buildRecursive(block: 2, of: 2)
+    }
+    let workerConstructor = b.loadBuiltin("Worker")
+
+    let functionString = b.loadString("function")
+    let argumentsArray = b.createArray(with: b.generateCallArguments(for: workerSignature))
+
+    let configObject = b.createObject(with: ["type": functionString, "arguments": argumentsArray])
+
+    let worker = b.construct(workerConstructor, withArgs: [workerFunction, configObject])
+    // Fuzzilli can now use the worker.
+}
+
 fileprivate let SerializeDeserializeGenerator = CodeGenerator("SerializeDeserializeGenerator", input: .object()) { b, o in
     // Load necessary builtins
     let d8 = b.reuseOrLoadBuiltin("d8")
@@ -218,6 +249,7 @@ let v8Profile = Profile(
     getProcessArguments: { (randomizingArguments: Bool) -> [String] in
         var args = [
             "--expose-gc",
+            "--omit-quit",
             "--future",
             "--harmony",
             "--assert-types",
@@ -248,7 +280,7 @@ let v8Profile = Profile(
         args.append(probability(0.9) ? "--turbo-store-elimination" : "--no-turbo-store-elimination")
         args.append(probability(0.9) ? "--turbo-rewrite-far-jumps" : "--no-turbo-rewrite-far-jumps")
         args.append(probability(0.9) ? "--turbo-optimize-apply" : "--no-turbo-optimize-apply")
-        args.append(chooseUniform(from: ["--no-enable-sse3", "--no-enable-ssse3", "--no-enable-sse4-1", "--no-enable-sse4-2", "--no-enable-avx", "--no-enable-avx2",]))
+        args.append(chooseUniform(from: ["--no-enable-sse3", "--no-enable-ssse3", "--no-enable-sse4-1", "--no-enable-sse4-2", "--no-enable-avx", "--no-enable-avx2"]))
         args.append(probability(0.9) ? "--turbo-load-elimination" : "--no-turbo-load-elimination")
         args.append(probability(0.9) ? "--turbo-inlining" : "--no-turbo-inlining")
         args.append(probability(0.9) ? "--turbo-splitting" : "--no-turbo-splitting")
@@ -263,14 +295,10 @@ let v8Profile = Profile(
     timeout: 250,
 
     codePrefix: """
-                function main() {
                 """,
 
     codeSuffix: """
                 gc();
-                }
-                %NeverOptimizeFunction(main);
-                main();
                 """,
 
     ecmaVersion: ECMAScriptVersion.es6,
@@ -281,6 +309,7 @@ let v8Profile = Profile(
         (ForceV8TurbofanGenerator,      10),
         (TurbofanVerifyTypeGenerator,   10),
         (SerializeDeserializeGenerator, 10),
+        (WorkerGenerator,               10),
     ],
 
     additionalProgramTemplates: WeightedList<ProgramTemplate>([
@@ -293,5 +322,6 @@ let v8Profile = Profile(
     additionalBuiltins: [
         "gc"                                            : .function([] => .undefined),
         "d8"                                            : .object(),
+        "Worker"                                        : .constructor([.anything, .object()] => .object(withMethods: ["postMessage","getMessage"])),
     ]
 )
